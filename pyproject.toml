@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta" 
+
+
+[project]
+name = "pytest-mock-unity-catalog"
+dynamic = ["version"]
+description = "Unity Catalog pyspark fixtures"
+
+readme = "README.md"
+
+requires-python = ">=3.9"
+
+authors = [{ name = "Marian Reuss", email = "marian.reuss@databricks.com" }]
+maintainers = [{ name = "Marian Reuss", email = "marian.reuss@databricks.com" }]
+
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+dependencies = ["pytest", "mock", "pyspark", ]
+
+
+[tool.setuptools]
+packages = ["pytest_mock_unity_catalog"]
+
+[project.entry-points."pytest11"]
+mock-unity-catalog = "pytest_mock_unity_catalog"
