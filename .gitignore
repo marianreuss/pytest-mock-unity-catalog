@@ -1,3 +1,12 @@
 *.pyc
+*.pyo
+*.pyd
 */__pycache__/*
 */.vscode/*
+*/.ruff_cache/*
+*/.venv/*
+dist/
+build/
+*.egg-info/
+*.egg
+.DS_Store
