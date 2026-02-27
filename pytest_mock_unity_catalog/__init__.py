@@ -31,7 +31,7 @@ def spark() -> SparkSession:
         .config("spark.ui.showConsoleProgress", "false")
         .config(
             "spark.jars.packages",
-            f"io.delta:delta-spark_{os.getenv('SPARK_VERSION', '2.12:3.2.1')}",
+            f"io.delta:delta-spark_{os.getenv('SPARK_VERSION', '4.1_2.13:4.1.0')}",
         )
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
@@ -81,4 +81,4 @@ def mock_save_as_table(local_table_base_path):
 
     for path in written_paths:
         if path.exists():
-            shutil.rmtree(path)
+            shutil.rmtree(str(path))
