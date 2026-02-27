@@ -31,7 +31,7 @@ def spark() -> SparkSession:
         .config("spark.ui.showConsoleProgress", "false")
         .config(
             "spark.jars.packages",
-            f"io.delta:delta-spark_{os.getenv('SPARK_VERSION', '2.12:3.2.1')}",
+            f"io.delta:delta-spark_{os.getenv('SPARK_VERSION', '4.1_2.13:4.1.0')}",
         )
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
@@ -45,13 +45,20 @@ def spark() -> SparkSession:
 
 @pytest.fixture
 def mock_read_table(spark, local_table_base_path):
-    """Mock spark.read.table to read from local Delta path derived from table name."""
+    """Mock spark.read.table and spark.table to read from local Delta path derived from table name."""
 
-    def _table(self, tableName, *args, **kwargs):
+    def _reader_table(self, tableName, *args, **kwargs):
         path = _table_name_to_path(local_table_base_path, tableName)
         return self.format("delta").load(str(path))
 
-    with patch("pyspark.sql.DataFrameReader.table", _table):
+    def _session_table(self, tableName, *_args, **_kwargs):
+        path = _table_name_to_path(local_table_base_path, tableName)
+        return self.read.format("delta").load(str(path))
+
+    with (
+        patch("pyspark.sql.DataFrameReader.table", _reader_table),
+        patch("pyspark.sql.SparkSession.table", _session_table),
+    ):
         yield
 
 
@@ -60,15 +67,18 @@ def mock_save_as_table(local_table_base_path):
     """Mock DataFrame.write.saveAsTable to write to local Delta path derived from table name."""
     written_paths: list[Path] = []
 
-    def _save_as_table(self, name, *args, **kwargs):
+    def _save_as_table(self, name, mode=None, *args, **kwargs):
         path = _table_name_to_path(local_table_base_path, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         written_paths.append(path)
-        return self.format("delta").mode("overwrite").save(str(path))
+        writer = self.format("delta")
+        if mode is not None:
+            writer = writer.mode(mode)
+        return writer.save(str(path))
 
     with patch("pyspark.sql.DataFrameWriter.saveAsTable", _save_as_table):
         yield
 
     for path in written_paths:
         if path.exists():
-            shutil.rmtree(path)
+            shutil.rmtree(str(path))
