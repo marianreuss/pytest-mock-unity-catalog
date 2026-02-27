@@ -67,11 +67,14 @@ def mock_save_as_table(local_table_base_path):
     """Mock DataFrame.write.saveAsTable to write to local Delta path derived from table name."""
     written_paths: list[Path] = []
 
-    def _save_as_table(self, name, *args, **kwargs):
+    def _save_as_table(self, name, mode=None, *args, **kwargs):
         path = _table_name_to_path(local_table_base_path, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         written_paths.append(path)
-        return self.format("delta").mode("overwrite").save(str(path))
+        writer = self.format("delta")
+        if mode is not None:
+            writer = writer.mode(mode)
+        return writer.save(str(path))
 
     with patch("pyspark.sql.DataFrameWriter.saveAsTable", _save_as_table):
         yield

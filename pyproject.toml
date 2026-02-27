@@ -26,7 +26,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-dependencies = ["pytest", "mock", "pyspark", ]
+dependencies = ["pytest", "pyspark"]
 
 
 [tool.setuptools]
@@ -34,3 +34,12 @@ packages = ["pytest_mock_unity_catalog"]
 
 [project.entry-points."pytest11"]
 mock-unity-catalog = "pytest_mock_unity_catalog"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

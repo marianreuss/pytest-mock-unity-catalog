@@ -1,10 +1,12 @@
 *.pyc
 *.pyo
 *.pyd
-*/__pycache__/*
-*/.vscode/*
-*/.ruff_cache/*
-*/.venv/*
+__pycache__/
+**/__pycache__/
+.vscode/
+.ruff_cache/
+.venv/
+.pytest_cache/
 dist/
 build/
 *.egg-info/
