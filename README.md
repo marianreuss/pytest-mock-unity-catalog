@@ -22,11 +22,16 @@ def test_something(spark):
     assert df.count() == 1
 ```
 
-By default uses `delta-spark_2.12:3.2.1`. Override via the `SPARK_VERSION` environment variable if your PySpark uses a different Scala version:
+By default uses `delta-spark_4.1_2.13:4.1.0` (PySpark 4.1, Scala 2.13). Override via the `SPARK_VERSION` environment variable for other versions:
 
 ```bash
-SPARK_VERSION=2.13:3.2.1 pytest
+# PySpark 3.5 / Scala 2.12
+SPARK_VERSION=2.12:3.2.1 pytest
+
+# PySpark 4.0 / Scala 2.13
+SPARK_VERSION=4.0_2.13:4.0.0 pytest
 ```
+
 
 ### `mock_save_as_table`
 
@@ -40,12 +45,15 @@ def test_write(spark, mock_save_as_table):
 
 ### `mock_read_table`
 
-Patches `spark.read.table` to read from the same local Delta path that `mock_save_as_table` writes to. Use both fixtures together to round-trip through a table.
+Patches both `spark.read.table` and `spark.table` to read from the same local Delta path that `mock_save_as_table` writes to. Use both fixtures together to round-trip through a table.
 
 ```python
 def test_read(spark, mock_read_table):
     df = spark.read.table("my_catalog.my_schema.my_table")
     assert df.count() == 2
+
+    df2 = spark.table("my_catalog.my_schema.my_table")
+    assert df2.count() == 2
 ```
 
 ### `local_table_base_path`
@@ -57,6 +65,55 @@ def test_path(local_table_base_path):
     assert (local_table_base_path / "my_catalog" / "my_schema" / "my_table").exists()
 ```
 
+### `mock_volume`
+
+Redirects all `/Volumes/...` filesystem access to a local temp directory for the duration of the test. The fixture yields the local base `Path` so tests can seed files before exercising the code under test.
+
+Intercepted access patterns:
+
+| Pattern | Mechanism |
+|---|---|
+| `open("/Volumes/...")` | patches `builtins.open` |
+| `open(Path("/Volumes/..."))` | patches `builtins.open` via PathLike |
+| `Path("/Volumes/...").read_text()` | patches `Path.__fspath__` |
+| `Path("/Volumes/...").write_text(...)` | patches `Path.__fspath__` |
+| `Path("/Volumes/...").exists()` / `.stat()` / `.mkdir()` | patches `Path.__fspath__` |
+| `pd.read_csv("/Volumes/...")` | pandas delegates to `open()` |
+| `pd.DataFrame.to_csv("/Volumes/...")` | pandas delegates to `open()` |
+
+> **Limitation:** binary/columnar readers that bypass Python's `open()` — e.g. `pandas.read_parquet` backed by pyarrow — are not intercepted.
+
+Parent directories under the temp root are created automatically, so no explicit `mkdir` is needed before writing.
+
+```python
+def test_read_volume(mock_volume):
+    # Seed a file at the equivalent of /Volumes/cat/schema/vol/data.csv
+    seed = mock_volume / "cat" / "schema" / "vol" / "data.csv"
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    seed.write_text("id,value\n1,a\n2,b\n")
+
+    # Code under test uses the real /Volumes path — it is transparently redirected
+    import pandas as pd
+    df = pd.read_csv("/Volumes/cat/schema/vol/data.csv")
+    assert len(df) == 2
+```
+
+Works with `pathlib.Path` too:
+
+```python
+def test_write_volume(mock_volume):
+    from pathlib import Path
+
+    Path("/Volumes/cat/schema/vol/out.txt").write_text("hello")
+
+    result = Path("/Volumes/cat/schema/vol/out.txt").read_text()
+    assert result == "hello"
+```
+
+### `volume_base_path`
+
+The session-scoped `Path` used as the root for all volume storage. Injected automatically into `mock_volume`; only needed directly when building custom fixtures on top of the volume base.
+
 ## Example: full round-trip
 
 ```python
@@ -67,6 +124,17 @@ def test_round_trip(spark, mock_save_as_table, mock_read_table):
     result = spark.read.table("my_catalog.my_schema.my_table")
     assert result.count() == 2
 ```
+
+## Databricks / on-cluster usage
+
+When tests run inside a Databricks notebook or job (i.e. `DATABRICKS_RUNTIME_VERSION` is set), the plugin detects this automatically:
+
+- **`spark`** returns the active `SparkSession` instead of creating a local one.
+- **`mock_read_table`** is a no-op — `spark.read.table` hits Unity Catalog as normal.
+- **`mock_save_as_table`** is a no-op — `df.write.saveAsTable` writes to Unity Catalog as normal. The table is dropped with `DROP TABLE IF EXISTS` in teardown.
+- **`mock_volume`** is a no-op — `/Volumes/...` paths reach the real Unity Catalog volume.
+
+No code changes are needed; the same tests run locally (mocked) and on Databricks (real).
 
 ## How it works
 
