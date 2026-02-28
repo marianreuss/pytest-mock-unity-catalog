@@ -36,6 +36,9 @@ dev = [
   "pre-commit>=4.3.0"
 ]
 
+[tool.setuptools_scm]
+local_scheme = "dirty-tag"
+
 [tool.setuptools]
 packages = ["pytest_mock_unity_catalog"]
 
