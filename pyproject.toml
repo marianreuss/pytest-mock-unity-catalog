@@ -26,8 +26,15 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-dependencies = ["pytest", "pyspark"]
+dependencies = [
+    "pytest",
+    "pyspark"
+]
 
+[dependency-groups]
+dev = [
+  "pre-commit>=4.3.0"
+]
 
 [tool.setuptools]
 packages = ["pytest_mock_unity_catalog"]
