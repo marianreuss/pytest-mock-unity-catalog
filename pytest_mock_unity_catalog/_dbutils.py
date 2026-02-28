@@ -1,3 +1,4 @@
+import builtins
 import shutil
 from collections import namedtuple
 from pathlib import Path
@@ -108,27 +109,44 @@ class _MockDbUtils:
 
 @pytest.fixture
 def mock_dbutils(mock_volume):
-    """Provide a ``dbutils``-compatible object whose ``.fs`` methods redirect
-    ``/Volumes/...`` paths to the same local temp directory as ``mock_volume``.
+    """Inject a ``dbutils``-compatible object into the test environment.
+
+    The mock is set as ``builtins.dbutils`` for the duration of the test, so
+    code under test can reference ``dbutils`` as a bare name — exactly as it
+    appears in Databricks notebooks — without any import or fixture argument.
+
+    All ``dbutils.fs.*`` calls that target ``/Volumes/...`` paths are redirected
+    to the same local temp directory as ``mock_volume``.
 
     Supported methods: ``ls``, ``put``, ``head``, ``mkdirs``, ``rm``, ``cp``, ``mv``.
 
-    On Databricks the fixture returns a real ``DBUtils`` instance so the same
-    test code works against the live Unity Catalog volume.
+    On Databricks the real ``DBUtils`` instance is injected instead, so the same
+    tests run against the live Unity Catalog volume without modification.
 
-    Example::
+    Example — code under test uses ``dbutils`` directly::
 
-        def test_roundtrip(mock_dbutils):
-            mock_dbutils.fs.put("/Volumes/cat/s/v/f.txt", "hello", overwrite=True)
-            assert mock_dbutils.fs.head("/Volumes/cat/s/v/f.txt") == "hello"
+        # production code (no imports needed)
+        def list_files(path):
+            return dbutils.fs.ls(path)
 
-            entries = mock_dbutils.fs.ls("/Volumes/cat/s/v")
-            assert any(e.name == "f.txt" for e in entries)
+        # test
+        def test_list(mock_dbutils):
+            dbutils.fs.put("/Volumes/c/s/v/f.txt", "x", overwrite=True)
+            assert any(e.name == "f.txt" for e in list_files("/Volumes/c/s/v"))
     """
     if IS_DATABRICKS:
         from pyspark.dbutils import DBUtils
         from pyspark.sql import SparkSession
 
-        yield DBUtils(SparkSession.getActiveSession())
-        return
-    yield _MockDbUtils(mock_volume)
+        _mock = DBUtils(SparkSession.getActiveSession())
+    else:
+        _mock = _MockDbUtils(mock_volume)
+
+    builtins.dbutils = _mock
+    try:
+        yield _mock
+    finally:
+        try:
+            del builtins.dbutils
+        except AttributeError:
+            pass

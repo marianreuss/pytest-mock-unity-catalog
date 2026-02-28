@@ -86,9 +86,9 @@ def test_mock_volume_pathlib_write(mock_volume):
 
 
 def test_mock_dbutils_put_and_head(mock_dbutils):
-    """dbutils.fs.put writes a file; dbutils.fs.head reads it back."""
-    mock_dbutils.fs.put("/Volumes/c/s/v/file.txt", "hello", overwrite=True)
-    assert mock_dbutils.fs.head("/Volumes/c/s/v/file.txt") == "hello"
+    """dbutils is available as a bare name; put writes a file and head reads it back."""
+    dbutils.fs.put("/Volumes/c/s/v/file.txt", "hello", overwrite=True)  # noqa: F821
+    assert dbutils.fs.head("/Volumes/c/s/v/file.txt") == "hello"  # noqa: F821
 
 
 def test_mock_dbutils_head_max_bytes(mock_dbutils):
