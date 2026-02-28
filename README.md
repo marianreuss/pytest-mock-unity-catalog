@@ -114,6 +114,56 @@ def test_write_volume(mock_volume):
 
 The session-scoped `Path` used as the root for all volume storage. Injected automatically into `mock_volume`; only needed directly when building custom fixtures on top of the volume base.
 
+### `mock_dbutils`
+
+Injects a `dbutils`-compatible object into `builtins` for the duration of the test, so code under test can reference `dbutils` as a bare name — exactly as it does inside a Databricks notebook — without any import or fixture argument.
+
+All `dbutils.fs.*` calls that target `/Volumes/...` paths are redirected to the same local temp directory as `mock_volume`, so both `open()` and `dbutils.fs.*` access the same files.
+
+```python
+# Production code — no imports, bare dbutils reference
+def list_files(path):
+    return dbutils.fs.ls(path)
+
+# Test — just request the fixture; dbutils is available globally
+def test_list(mock_dbutils):
+    dbutils.fs.put("/Volumes/cat/schema/vol/data.txt", "hello", overwrite=True)
+    assert any(e.name == "data.txt" for e in list_files("/Volumes/cat/schema/vol"))
+```
+
+The fixture also yields the mock object, so tests can reference it via the parameter name when that reads more clearly.
+
+Supported `dbutils.fs` methods:
+
+| Method | Signature |
+|---|---|
+| `ls` | `ls(path) → list[FileInfo]` |
+| `put` | `put(path, contents, overwrite=False) → bool` |
+| `head` | `head(path, max_bytes=65536) → str` |
+| `mkdirs` | `mkdirs(path) → bool` |
+| `rm` | `rm(path, recurse=False) → bool` |
+| `cp` | `cp(from_path, to_path, recurse=False) → bool` |
+| `mv` | `mv(from_path, to_path, recurse=False) → bool` |
+
+`ls` returns a list of `FileInfo(path, name, size, modificationTime)` namedtuples that match the Databricks shape. Directory entries have a trailing `/` in `name` and `size=0`.
+
+Files seeded via `mock_volume` (or via `open()`) are immediately visible to `dbutils.fs`, and vice versa:
+
+```python
+def test_cross_access(mock_volume, mock_dbutils):
+    # Write via pathlib, read via dbutils
+    (mock_volume / "cat" / "schema" / "vol").mkdir(parents=True, exist_ok=True)
+    (mock_volume / "cat" / "schema" / "vol" / "file.txt").write_text("shared")
+    assert dbutils.fs.head("/Volumes/cat/schema/vol/file.txt") == "shared"
+
+    # Write via dbutils, read via open()
+    dbutils.fs.put("/Volumes/cat/schema/vol/out.txt", "also shared", overwrite=True)
+    with open("/Volumes/cat/schema/vol/out.txt") as f:
+        assert f.read() == "also shared"
+```
+
+On Databricks the real `DBUtils(spark)` instance is injected instead, so the same tests run against the live Unity Catalog volume without modification.
+
 ## Example: full round-trip
 
 ```python
