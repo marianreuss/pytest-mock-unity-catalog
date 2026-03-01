@@ -1,13 +1,16 @@
 import os
 
 import pytest
-from pyspark.sql import SparkSession
 
 from pytest_mock_unity_catalog._common import IS_DATABRICKS
 
 
 @pytest.fixture(scope="session")
-def spark() -> SparkSession:
+def spark():
+    SparkSession = pytest.importorskip(
+        "pyspark.sql",
+        reason="pyspark not installed; install pytest-mock-unity-catalog[spark]",
+    ).SparkSession
     if IS_DATABRICKS:
         return SparkSession.getActiveSession()
     return (

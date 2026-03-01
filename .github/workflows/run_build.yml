@@ -38,7 +38,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        uv sync
+        uv sync --extra spark
     - name: Test with pytest
       run: |
         uv run pytest tests

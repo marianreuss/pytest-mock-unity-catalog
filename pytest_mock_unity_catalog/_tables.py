@@ -1,9 +1,9 @@
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from pyspark.sql import DataFrameWriter
 
 from pytest_mock_unity_catalog._common import IS_DATABRICKS, _table_name_to_path
 
@@ -15,18 +15,44 @@ def local_table_base_path(tmp_path_factory) -> Path:
 
 
 def _mock_save_as_table_databricks(spark):
+    from pyspark.sql import DataFrameWriter
+
     written_names: list[str] = []
-    _orig = DataFrameWriter.saveAsTable
 
-    def _tracking_save_as_table(self, name, *args, **kwargs):
-        written_names.append(name)
-        return _orig(self, name, *args, **kwargs)
+    def _make_tracker(orig):
+        def _track(self, name, *args, **kwargs):
+            written_names.append(name)
+            return orig(self, name, *args, **kwargs)
 
-    with patch("pyspark.sql.DataFrameWriter.saveAsTable", _tracking_save_as_table):
-        yield
+        return _track
 
-    for name in written_names:
-        spark.sql(f"DROP TABLE IF EXISTS {name}")
+    # Patch both the classic and Spark Connect DataFrameWriter (DBR 13+).
+    active_patches = [
+        patch(
+            "pyspark.sql.DataFrameWriter.saveAsTable",
+            _make_tracker(DataFrameWriter.saveAsTable),
+        )
+    ]
+    try:
+        from pyspark.sql.connect.readwriter import DataFrameWriter as ConnectDFW
+
+        active_patches.append(
+            patch(
+                "pyspark.sql.connect.readwriter.DataFrameWriter.saveAsTable",
+                _make_tracker(ConnectDFW.saveAsTable),
+            )
+        )
+    except ImportError:
+        pass
+
+    try:
+        with ExitStack() as stack:
+            for p in active_patches:
+                stack.enter_context(p)
+            yield
+    finally:
+        for name in written_names:
+            spark.sql(f"DROP TABLE IF EXISTS {name}")
 
 
 def _mock_save_as_table_local(local_table_base_path):
@@ -41,12 +67,13 @@ def _mock_save_as_table_local(local_table_base_path):
             writer = writer.mode(mode)
         return writer.save(str(path))
 
-    with patch("pyspark.sql.DataFrameWriter.saveAsTable", _save_as_table):
-        yield
-
-    for path in written_paths:
-        if path.exists():
-            shutil.rmtree(str(path))
+    try:
+        with patch("pyspark.sql.DataFrameWriter.saveAsTable", _save_as_table):
+            yield
+    finally:
+        for path in written_paths:
+            if path.exists():
+                shutil.rmtree(str(path))
 
 
 @pytest.fixture
