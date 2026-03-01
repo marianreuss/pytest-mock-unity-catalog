@@ -1,8 +1,19 @@
 # pytest-mock-unity-catalog
 
+[![PyPI](https://img.shields.io/pypi/v/pytest-mock-unity-catalog)](https://pypi.org/project/pytest-mock-unity-catalog/)
+[![Tests](https://github.com/marianreuss/pytest-mock-unity-catalog/actions/workflows/run_build.yml/badge.svg)](https://github.com/marianreuss/pytest-mock-unity-catalog/actions/workflows/run_build.yml)
+
 Pytest plugin that provides PySpark fixtures for testing code that reads and writes Unity Catalog tables — without a live Databricks cluster. Table operations are redirected to a local Delta directory so tests run fully offline.
 
 ## Installation
+
+For local development with PySpark install as follows:
+
+```bash
+pip install "pytest-mock-unity-catalog[spark]"
+```
+
+Running on databricks is automatically detected and Unity Catalog is used without any changes. On Databricks, make sure to install without the `spark` dependency.
 
 ```bash
 pip install pytest-mock-unity-catalog
@@ -12,7 +23,8 @@ Pytest discovers the plugin automatically via its entry point. No imports or `co
 
 ## Fixtures
 
-### `spark`
+<details>
+<summary><code>spark</code></summary>
 
 A session-scoped `SparkSession` configured for local testing with Delta Lake enabled.
 
@@ -22,18 +34,20 @@ def test_something(spark):
     assert df.count() == 1
 ```
 
-By default uses `delta-spark_4.1_2.13:4.1.0` (PySpark 4.1, Scala 2.13). Override via the `SPARK_VERSION` environment variable for other versions:
+By default uses `delta-spark_4.1_2.13:4.1.0` (PySpark 4.1, Scala 2.13). Override via the `DELTA_ARTIFACT_SUFFIX` environment variable for other versions:
 
 ```bash
 # PySpark 3.5 / Scala 2.12
-SPARK_VERSION=2.12:3.2.1 pytest
+DELTA_ARTIFACT_SUFFIX=2.12:3.2.1 pytest
 
 # PySpark 4.0 / Scala 2.13
-SPARK_VERSION=4.0_2.13:4.0.0 pytest
+DELTA_ARTIFACT_SUFFIX=4.0_2.13:4.0.0 pytest
 ```
 
+</details>
 
-### `mock_save_as_table`
+<details>
+<summary><code>mock_save_as_table</code></summary>
 
 Patches `DataFrame.write.saveAsTable` to write a Delta table to a local temp directory instead of Unity Catalog. The Unity Catalog-style three-part name (`catalog.schema.table`) is mapped to a directory path.
 
@@ -43,7 +57,10 @@ def test_write(spark, mock_save_as_table):
     df.write.saveAsTable("my_catalog.my_schema.my_table")  # writes locally
 ```
 
-### `mock_read_table`
+</details>
+
+<details>
+<summary><code>mock_read_table</code></summary>
 
 Patches both `spark.read.table` and `spark.table` to read from the same local Delta path that `mock_save_as_table` writes to. Use both fixtures together to round-trip through a table.
 
@@ -56,16 +73,10 @@ def test_read(spark, mock_read_table):
     assert df2.count() == 2
 ```
 
-### `local_table_base_path`
+</details>
 
-The `Path` to the session-scoped temp directory used as the root for all table storage. Useful for asserting on the filesystem directly or for sharing the path in custom fixtures.
-
-```python
-def test_path(local_table_base_path):
-    assert (local_table_base_path / "my_catalog" / "my_schema" / "my_table").exists()
-```
-
-### `mock_volume`
+<details>
+<summary><code>mock_volume</code></summary>
 
 Redirects all `/Volumes/...` filesystem access to a local temp directory for the duration of the test. The fixture yields the local base `Path` so tests can seed files before exercising the code under test.
 
@@ -110,11 +121,10 @@ def test_write_volume(mock_volume):
     assert result == "hello"
 ```
 
-### `volume_base_path`
+</details>
 
-The session-scoped `Path` used as the root for all volume storage. Injected automatically into `mock_volume`; only needed directly when building custom fixtures on top of the volume base.
-
-### `mock_dbutils`
+<details>
+<summary><code>mock_dbutils</code></summary>
 
 Injects a `dbutils`-compatible object into `builtins` for the duration of the test, so code under test can reference `dbutils` as a bare name — exactly as it does inside a Databricks notebook — without any import or fixture argument.
 
@@ -164,34 +174,4 @@ def test_cross_access(mock_volume, mock_dbutils):
 
 On Databricks the real `DBUtils(spark)` instance is injected instead, so the same tests run against the live Unity Catalog volume without modification.
 
-## Example: full round-trip
-
-```python
-def test_round_trip(spark, mock_save_as_table, mock_read_table):
-    df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
-    df.write.saveAsTable("my_catalog.my_schema.my_table")
-
-    result = spark.read.table("my_catalog.my_schema.my_table")
-    assert result.count() == 2
-```
-
-## Databricks / on-cluster usage
-
-When tests run inside a Databricks notebook or job (i.e. `DATABRICKS_RUNTIME_VERSION` is set), the plugin detects this automatically:
-
-- **`spark`** returns the active `SparkSession` instead of creating a local one.
-- **`mock_read_table`** is a no-op — `spark.read.table` hits Unity Catalog as normal.
-- **`mock_save_as_table`** is a no-op — `df.write.saveAsTable` writes to Unity Catalog as normal. The table is dropped with `DROP TABLE IF EXISTS` in teardown.
-- **`mock_volume`** is a no-op — `/Volumes/...` paths reach the real Unity Catalog volume.
-
-No code changes are needed; the same tests run locally (mocked) and on Databricks (real).
-
-## How it works
-
-`mock_save_as_table` and `mock_read_table` patch PySpark's `DataFrameWriter.saveAsTable` and `DataFrameReader.table` for the duration of the test. The Unity Catalog table name is converted to a filesystem path by replacing `.` separators with `/`:
-
-```
-my_catalog.my_schema.my_table  →  <tmp>/my_catalog/my_schema/my_table
-```
-
-The temp directory is managed by pytest (`tmp_path_factory`) and lives under the OS temp space (e.g. `/var/folders/.../pytest-of-<user>/pytest-<N>/`). Pytest retains the last three runs before pruning.
+</details>
