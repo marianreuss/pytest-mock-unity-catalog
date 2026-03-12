@@ -4,6 +4,9 @@ from pytest_mock_unity_catalog._tables import (
     local_table_base_path as local_table_base_path,
 )
 from pytest_mock_unity_catalog._tables import (
+    mock_delta_table as mock_delta_table,
+)
+from pytest_mock_unity_catalog._tables import (
     mock_read_table as mock_read_table,
 )
 from pytest_mock_unity_catalog._tables import (

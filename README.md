@@ -76,6 +76,53 @@ def test_read(spark, mock_read_table):
 </details>
 
 <details>
+<summary><code>mock_delta_table</code></summary>
+
+Patches `DeltaTable.forName` and `spark.sql` DML statements to redirect Unity
+Catalog three-part names (`catalog.schema.table`) to the same local Delta paths
+used by `mock_save_as_table`. Use alongside `mock_save_as_table` when the code
+under test performs merge, delete, or update operations.
+
+| Pattern | Mechanism |
+|---|---|
+| `DeltaTable.forName(spark, "cat.schema.tbl").merge(...).execute()` | `DeltaTable.forName` → `DeltaTable.forPath` |
+| `DeltaTable.forName(spark, "cat.schema.tbl").delete(condition)` | `DeltaTable.forName` → `DeltaTable.forPath` |
+| `DeltaTable.forName(spark, "cat.schema.tbl").update(condition, {...})` | `DeltaTable.forName` → `DeltaTable.forPath` |
+| `spark.sql("MERGE INTO cat.schema.tbl USING ...")` | rewrites name to `delta.\`/local/path\`` |
+| `spark.sql("DELETE FROM cat.schema.tbl WHERE ...")` | rewrites name to `delta.\`/local/path\`` |
+| `spark.sql("UPDATE cat.schema.tbl SET ...")` | rewrites name to `delta.\`/local/path\`` |
+
+> **Note:** SQL rewriting only applies to `MERGE INTO`, `DELETE FROM`, and `UPDATE`
+> statements where the target matches a table already written locally. `SELECT` and
+> other SQL are passed through unmodified.
+
+```python
+from delta.tables import DeltaTable
+
+def test_merge(spark, mock_read_table, mock_save_as_table, mock_delta_table):
+    df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
+    df.write.saveAsTable("my_catalog.my_schema.my_table")
+
+    updates = spark.createDataFrame([(1, "updated"), (3, "new")], ["id", "value"])
+    (
+        DeltaTable.forName(spark, "my_catalog.my_schema.my_table")
+        .alias("t")
+        .merge(updates.alias("s"), "t.id = s.id")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
+    )
+
+    result = spark.read.table("my_catalog.my_schema.my_table")
+    assert result.count() == 3
+```
+
+On Databricks the fixture is a no-op; `DeltaTable.forName` and `spark.sql` reach
+the real Unity Catalog directly.
+
+</details>
+
+<details>
 <summary><code>mock_volume</code></summary>
 
 Redirects all `/Volumes/...` filesystem access to a local temp directory for the duration of the test. The fixture yields the local base `Path` so tests can seed files before exercising the code under test.
