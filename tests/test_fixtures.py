@@ -151,6 +151,114 @@ def test_mock_dbutils_mv(mock_dbutils):
         mock_dbutils.fs.head("/Volumes/c/s/v/old.txt")
 
 
+# ---------------------------------------------------------------------------
+# mock_delta_table tests
+# ---------------------------------------------------------------------------
+
+
+def test_mock_delta_table_merge(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """DeltaTable.forName merge upserts rows: matched rows updated, new rows inserted."""
+    from delta.tables import DeltaTable
+
+    df.write.saveAsTable(table_name1)
+    updates = spark.createDataFrame([(1, "updated"), (3, "new")], ["id", "value"])
+
+    (
+        DeltaTable.forName(spark, table_name1)
+        .alias("t")
+        .merge(updates.alias("s"), "t.id = s.id")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
+    )
+
+    result = spark.read.table(table_name1)
+    assert result.count() == 3
+    assert result.filter("id = 1").collect()[0]["value"] == "updated"
+
+
+def test_mock_delta_table_delete_api(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """DeltaTable.forName delete removes matching rows."""
+    from delta.tables import DeltaTable
+
+    df.write.saveAsTable(table_name1)
+    DeltaTable.forName(spark, table_name1).delete("id = 1")
+
+    result = spark.read.table(table_name1)
+    assert result.count() == 1
+    assert result.collect()[0]["id"] == 2
+
+
+def test_mock_delta_table_update_api(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """DeltaTable.forName update modifies matching rows."""
+    from delta.tables import DeltaTable
+    from pyspark.sql import functions as F
+
+    df.write.saveAsTable(table_name1)
+    DeltaTable.forName(spark, table_name1).update(
+        condition="id = 2", set={"value": F.lit("modified")}
+    )
+
+    result = spark.read.table(table_name1)
+    assert result.filter("id = 2").collect()[0]["value"] == "modified"
+
+
+def test_mock_delta_table_sql_delete(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """spark.sql DELETE FROM with three-part name is rewritten to the local Delta path."""
+    df.write.saveAsTable(table_name1)
+    spark.sql(f"DELETE FROM {table_name1} WHERE id = 1")
+
+    result = spark.read.table(table_name1)
+    assert result.count() == 1
+
+
+def test_mock_delta_table_sql_update(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """spark.sql UPDATE with three-part name is rewritten to the local Delta path."""
+    df.write.saveAsTable(table_name1)
+    spark.sql(f"UPDATE {table_name1} SET value = 'x' WHERE id = 2")
+
+    result = spark.read.table(table_name1)
+    assert result.filter("id = 2").collect()[0]["value"] == "x"
+
+
+def test_mock_delta_table_sql_merge(
+    spark, df, table_name1, mock_read_table, mock_save_as_table, mock_delta_table
+):
+    """spark.sql MERGE INTO with three-part name is rewritten to the local Delta path."""
+    df.write.saveAsTable(table_name1)
+    spark.createDataFrame([(1, "merged")], ["id", "value"]).createOrReplaceTempView(
+        "_src"
+    )
+
+    spark.sql(f"""
+        MERGE INTO {table_name1} AS t
+        USING _src AS s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET t.value = s.value
+    """)
+
+    assert (
+        spark.read.table(table_name1).filter("id = 1").collect()[0]["value"] == "merged"
+    )
+
+
+def test_mock_delta_table_missing_raises(spark, mock_delta_table):
+    """forName raises a clear error when no local table exists at the expected path."""
+    from delta.tables import DeltaTable
+
+    with pytest.raises(RuntimeError, match="mock_delta_table"):
+        DeltaTable.forName(spark, "nonexistent.schema.table")
+
+
 def test_mock_dbutils_and_open_share_same_dir(mock_volume, mock_dbutils):
     """Files seeded via mock_volume are readable via dbutils.fs, and vice versa."""
     # Seed via mock_volume (pathlib), read via dbutils.fs

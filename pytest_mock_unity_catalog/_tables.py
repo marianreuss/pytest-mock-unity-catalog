@@ -1,3 +1,4 @@
+import re
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
@@ -107,3 +108,89 @@ def mock_read_table(spark, local_table_base_path):
         patch("pyspark.sql.SparkSession.table", _session_table),
     ):
         yield
+
+
+_THREE_PART_RE = re.compile(
+    r"`[^`]+`\s*\.\s*`[^`]+`\s*\.\s*`[^`]+`"  # backtick-quoted
+    r"|[A-Za-z_]\w*\.[A-Za-z_]\w*\.[A-Za-z_]\w*",  # plain identifiers
+)
+_DML_RE = re.compile(r"^\s*(?:MERGE\s+INTO|DELETE\s+FROM|UPDATE)\s+", re.IGNORECASE)
+
+
+def _rewrite_sql_for_local(sql: str, base_path: Path) -> str:
+    """Rewrite three-part Unity Catalog names in DML SQL to delta.`/local/path` references."""
+    if not _DML_RE.match(sql):
+        return sql
+
+    def _replace(m: re.Match) -> str:
+        raw = m.group(0)
+        parts = [p.strip() for p in re.split(r"[\s`.]+", raw) if p.strip()]
+        if len(parts) != 3:
+            return raw
+        name = ".".join(parts)
+        path = _table_name_to_path(base_path, name)
+        return f"delta.`{path}`" if path.exists() else raw
+
+    return _THREE_PART_RE.sub(_replace, sql)
+
+
+def _mock_delta_table_local(spark, local_table_base_path: Path):
+    from pyspark.sql import SparkSession
+
+    original_sql = SparkSession.sql
+
+    def _patched_sql(self, sqlQuery, *args, **kwargs):
+        return original_sql(
+            self,
+            _rewrite_sql_for_local(sqlQuery, local_table_base_path),
+            *args,
+            **kwargs,
+        )
+
+    active_patches = [patch("pyspark.sql.SparkSession.sql", _patched_sql)]
+
+    try:
+        from delta.tables import DeltaTable
+
+        def _for_name(cls, sparkSession, tableOrViewName):
+            path = _table_name_to_path(local_table_base_path, tableOrViewName)
+            if path.exists():
+                return DeltaTable.forPath(sparkSession, str(path))
+            raise RuntimeError(
+                f"mock_delta_table: no local table found for '{tableOrViewName}' "
+                f"(expected path: {path}). Write the table first with mock_save_as_table."
+            )
+
+        active_patches.append(
+            patch.object(DeltaTable, "forName", classmethod(_for_name))
+        )
+    except ImportError:
+        pass  # delta Python package not installed; SQL rewriting still applies
+
+    with ExitStack() as stack:
+        for p in active_patches:
+            stack.enter_context(p)
+        yield
+
+
+@pytest.fixture
+def mock_delta_table(spark, local_table_base_path):
+    """Mock DeltaTable.forName and spark.sql DML to operate on local Delta paths.
+
+    Use alongside mock_save_as_table when production code performs merge, delete,
+    or update operations on Unity Catalog tables.
+
+    Supported:
+      - DeltaTable.forName(spark, "cat.schema.tbl").merge(...).execute()
+      - DeltaTable.forName(spark, "cat.schema.tbl").delete(condition)
+      - DeltaTable.forName(spark, "cat.schema.tbl").update(condition, {...})
+      - spark.sql("MERGE INTO cat.schema.tbl USING ...")
+      - spark.sql("DELETE FROM cat.schema.tbl WHERE ...")
+      - spark.sql("UPDATE cat.schema.tbl SET ...")
+
+    On Databricks: no-op (real Delta APIs operate against Unity Catalog directly).
+    """
+    if IS_DATABRICKS:
+        yield
+        return
+    yield from _mock_delta_table_local(spark, local_table_base_path)
